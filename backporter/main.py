@@ -42,7 +42,7 @@ from backporter.config import (
 )
 from backporter.project import (
     CLOSED, CONFLICTS, EXPLICIT, F_BACKPORT_PR, F_FLAVOR, F_NOTE, F_REQUESTED, F_SOURCE_PR, F_STATUS, F_VERSION,
-    APPROVED, DISCARDED, F_DECISION, F_NOT_NEEDED_FROM, F_REQUESTED_BY, FINAL_STATUSES, IMPLIED, MERGED, NOT_APPLICABLE, NOT_STARTED, PR_OPEN, PRESENT, Item, Project,
+    APPROVED, DISCARDED, F_DECISION, F_JUSTIFICATION, F_NOT_NEEDED_FROM, F_REQUESTED_BY, FINAL_STATUSES, IMPLIED, MERGED, NOT_APPLICABLE, NOT_STARTED, PR_OPEN, PRESENT, Item, Project,
     ACTIVE_FILTER, REQUESTS_FILTER, TO_DISCARD_FILTER, TRACKED_FILTER, source_filter,
 )
 from backporter.rules import closure, plan_remove, sort_versions
@@ -214,7 +214,7 @@ def pr_status(pr: PullRequest) -> str:
 
 def create_item(
     project: Project, version: Version, url: str, title: str, requested: str, requested_by: str,
-    status: str = NOT_STARTED, note: str = "", not_needed_from: str = "",
+    status: str = NOT_STARTED, note: str = "", not_needed_from: str = "", justification: str = "",
 ) -> Item:
     """Add an item (Not started unless given); title is the source's (see Source.title)."""
     values = {
@@ -229,12 +229,14 @@ def create_item(
         values[F_NOTE] = note
     if not_needed_from:
         values[F_NOT_NEEDED_FROM] = not_needed_from
+    if justification:
+        values[F_JUSTIFICATION] = justification
     item_id = project.add_item(title=title, body=url, values=values)
     print(f"{version.key}: added {url} ({requested}{', ' + status if status != NOT_STARTED else ''})")
     return Item(
         id=item_id, title=title, body=url, content_url="", source_pr=url, version=version.key, flavor=version.flavor,
         requested=requested, status=status, backport_pr="", note=note, decision="", requested_by=requested_by,
-        not_needed_from=not_needed_from, creator="",
+        not_needed_from=not_needed_from, justification=justification, creator="",
     )
 
 
@@ -258,6 +260,7 @@ def move(project: Project, item: Item, row_id: str, pr: PullRequest) -> None:
         F_SOURCE_PR: item.source_pr, F_VERSION: item.version, F_FLAVOR: item.flavor, F_REQUESTED: item.requested,
         F_REQUESTED_BY: item.requested_by, F_NOT_NEEDED_FROM: item.not_needed_from, F_DECISION: item.decision,
         F_NOTE: item.note, F_STATUS: item.status, F_BACKPORT_PR: item.backport_pr,
+        F_JUSTIFICATION: item.justification,
     }
     for field, value in values.items():
         if value:
@@ -477,25 +480,30 @@ def cmd_add_version(args, gh: Github, config: Config) -> None:
                 if not i.not_needed_from or version.version < version_number(i.not_needed_from)
             ]
             if active:
-                create_item(project, version, url, title, IMPLIED, active[0].requested_by)
+                create_item(
+                    project, version, url, title, IMPLIED, active[0].requested_by,
+                    justification=active[0].justification,
+                )
             else:
                 # Every request implying it said the backport isn't needed from some version below this one.
                 limit = implied_by[0]
                 create_item(
                     project, version, url, title, IMPLIED, limit.requested_by, NOT_APPLICABLE,
                     not_needed_note(limit.not_needed_from, limit.requested_by),
+                    justification=limit.justification,
                 )
 
 
 def track(
     gh: Github, project: Project, config: Config, pr_url: str, version_key: str, requested_by: str,
-    created: list[Item] | None = None, not_needed_from: str = "", imply: bool = True,
+    created: list[Item] | None = None, not_needed_from: str = "", imply: bool = True, justification: str = "",
 ) -> Item:
     """
     Track a backport of pr_url (or a bump to the release at pr_url) to version_key (explicit) and, with imply,
     every version it implies, for `requested_by`. Returns version_key's item.
     Implied versions >= not_needed_from (a version number like '26.3') get new rows marked Not applicable;
     existing rows are left as they are, since other requests may need them.
+    Every row of the request gets justification, unless it already has one.
     New items are appended to `created`; items already in it count as existing, since GitHub's
     item list can lag behind for a while after items are added.
     """
@@ -517,6 +525,9 @@ def track(
         if item and v == target and not_needed_from and item.not_needed_from != not_needed_from:
             project.set_value(item.id, F_NOT_NEEDED_FROM, not_needed_from)
             item.not_needed_from = not_needed_from
+        if item and justification and not item.justification:
+            project.set_value(item.id, F_JUSTIFICATION, justification)
+            item.justification = justification
         if item:
             if requested == EXPLICIT and item.decision == DISCARDED:
                 # A new request overrides an earlier discard; the Note keeps that history visible.
@@ -543,12 +554,12 @@ def track(
         if bound and v.version >= bound:
             created.append(create_item(
                 project, v, url, title, requested, requested_by, NOT_APPLICABLE,
-                not_needed_note(not_needed_from, requested_by),
+                not_needed_note(not_needed_from, requested_by), justification=justification,
             ))
         else:
             created.append(create_item(
                 project, v, url, title, requested, requested_by,
-                not_needed_from=not_needed_from if v == target else "",
+                not_needed_from=not_needed_from if v == target else "", justification=justification,
             ))
         if v == target:
             result = created[-1]
@@ -581,7 +592,9 @@ def process_requests(gh: Github, project: Project, config: Config) -> list[Item]
                 if parse_source(item.source_pr) != parse_source(item.content_url):
                     pr_repo, number = git_ops.parse_pr_url(item.content_url)
                     port = gh.get_repo(pr_repo).get_pull(number)
-                    ported = attach_port(gh, project, config, port, item.id, item.source_pr, item.creator, created)
+                    ported = attach_port(
+                        gh, project, config, port, item.id, item.source_pr, item.creator, created, item.justification,
+                    )
                     if not any(i is ported for i in created):
                         created.append(ported)
                     continue
@@ -618,14 +631,14 @@ def process_requests(gh: Github, project: Project, config: Config) -> list[Item]
         limit = f" (not needed from {bound})" if bound else ""
         print(f"Request '{item.title}': {url} -> {', '.join(dict.fromkeys(requested))}{limit}")
         for key in dict.fromkeys(requested):
-            track(gh, project, config, url, key, item.creator, created, bound)
+            track(gh, project, config, url, key, item.creator, created, bound, justification=item.justification)
         project.delete_item(item.id)
     return created
 
 
 def attach_port(
     gh: Github, project: Project, config: Config, port: PullRequest, row_id: str | None, source_text: str,
-    requested_by: str, created: list[Item],
+    requested_by: str, created: list[Item], justification: str = "",
 ) -> Item:
     """
     Make port, an existing backport (or bump) PR in TARGET_REPO, the row of the source named in source_text for
@@ -651,7 +664,7 @@ def attach_port(
         row_id = old.id
     elif old and not overwrite and (old.content_url or old.backport_pr):
         raise ValueError(f"{version.key} of {url} already has {old.content_url or old.backport_pr}")
-    item = track(gh, project, config, url, version.key, requested_by, created, imply=False)
+    item = track(gh, project, config, url, version.key, requested_by, created, imply=False, justification=justification)
     if overwrite:
         item.note = f"Was {item.status}: {item.note}" if item.note else f"Was {item.status}"
     item.status, item.backport_pr = pr_status(port), port.html_url
@@ -669,7 +682,10 @@ def cmd_add_port(args, gh: Github, config: Config) -> None:
     pr_repo, number = git_ops.parse_pr_url(args.port)
     port = gh.get_repo(pr_repo).get_pull(number)
     row = next((i for i in project.items(REQUESTS_FILTER) if i.content_url == port.html_url), None)
-    attach_port(gh, project, config, port, row.id if row else None, args.pr, gh.get_user().login, [])
+    attach_port(
+        gh, project, config, port, row.id if row else None, args.pr, gh.get_user().login, [],
+        row.justification if row else "",
+    )
 
 
 def cmd_remove(args, gh: Github, config: Config) -> None:

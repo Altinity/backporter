@@ -20,13 +20,14 @@ Version keys look like `stable-25.8` or `antalya-26.3`. Each version has its own
 1. Open the [project](https://github.com/orgs/Altinity/projects/39). It opens on the **Requests** view.
 2. Paste the original PR's link into the "Start typing to create an item" row at the bottom and press Enter, or use **Add item from repository**. The PR is added as a row.
 3. In that row's **Version** cell, pick the oldest version that needs the change. Leave **Source PR** empty: a PR row with another link there is an [existing port](#tracking-an-existing-port).
-4. Done. The next `backporter scan` creates one tracked item per version, explicit plus implied, in the version views, with Status `Not started` and **Requested by** set to whoever added the request row. Then it deletes the request row.
+4. Optionally, type why the backport is needed in the row's **Justification** cell.
+5. Done. The next `backporter scan` creates one tracked item per version, explicit plus implied, in the version views, with Status `Not started`, **Requested by** set to whoever added the request row, and the request's **Justification**. Then it deletes the request row.
 
 **Two starting versions.** Only needed when the stable and antalya starting points differ, e.g. antalya from 25.8 but stable only from 26.3. Pick one in **Version** and type the other key(s) in the row's **Note** cell, e.g. `stable-26.3`.
 
 **Not needed from newer versions.** If the change is known to be unnecessary from some version on (e.g. the code changed in 26.3), pick that version number in the request's **Not needed from** cell (empty = no limit). All implied versions from that number up, stable and antalya alike, get rows with Status `Not applicable` and "Not needed from 26.3 (per request by @…)" in Note. Rows that already exist are left as they are. The limit is stored on the explicit row, so versions added later with `add-version` are also created as `Not applicable` for that PR. A request whose own version is at or above its limit is skipped. On the command line: `backporter add <PR> <version> --not-needed-from 26.3`.
 
-**Requesting again.** A request never creates a duplicate row: if the PR is already tracked for a version, that row is kept as it is (an implied row becomes explicit). If the row was **Discarded**, a new request for that exact version clears its Decision (back to undecided), sets Requested by to the new requester, and writes "Previously discarded; requested again by @… on <date>" in Note. Implied versions that were discarded individually stay discarded.
+**Requesting again.** A request never creates a duplicate row: if the PR is already tracked for a version, that row is kept as it is (an implied row becomes explicit). Its Justification is kept too; only an empty one gets the new request's text. If the row was **Discarded**, a new request for that exact version clears its Decision (back to undecided), sets Requested by to the new requester, and writes "Previously discarded; requested again by @… on <date>" in Note. Implied versions that were discarded individually stay discarded.
 
 **What GitHub records.** Adding an upstream `ClickHouse/ClickHouse` PR to the project makes GitHub log "added to project" on that PR, and deleting the processed row may log "removed from project". These are project events. The backporter never writes to the upstream PR itself.
 
@@ -51,7 +52,7 @@ A bump PR follows the team's convention: branch `bump/<branch>/<X.Y.Z>`, title `
 A backport or bump PR made outside the backporter (by hand, or a port with changes of its own) can be tracked like the ones it opens:
 
 1. In **Requests**, paste the port PR's link (a PR in `Altinity/ClickHouse`) into the bottom row and press Enter.
-2. In the row's **Source PR** cell, paste the link of the PR it ports, or the release link for a bump. A request row that is a PR with a different PR (or release) in **Source PR** is a port; **Version** isn't needed.
+2. In the row's **Source PR** cell, paste the link of the PR it ports, or the release link for a bump. A request row that is a PR with a different PR (or release) in **Source PR** is a port; **Version** isn't needed. **Justification** works as for a backport request.
 3. The next `backporter scan` makes the port the tracked row of that source for the version whose branch the port targets (its base branch, looked up in `[branches]`). The row moves to that version's view with Requested `explicit`, Status from the port (`PR open` / `Merged` / `Closed`), and the port is added to its builds project like any backport PR.
 
 Only that version is tracked: no implied versions are added, so `scan` reports them as missing for that PR. One version has one port:
@@ -217,6 +218,7 @@ Each item is one (source PR, version) pair, or (release, version) for a bump. It
 | Flavor | `stable` / `antalya` |
 | Requested | `explicit` (named in `add`, a request or a port) or `implied` (required by the propagation rules) |
 | Requested by | GitHub login of whoever added the request or port row (for `backporter add` and `add-port`: the token's owner). Implied rows, including those added later by `add-version`, get the same person. |
+| Justification | Why the backport is needed, typed by the requester in the request or port row. Every row the request creates, implied ones included (also those added later by `add-version`), gets the same text; an existing row with a Justification keeps it. Empty for `backporter add`, and for `add-port` unless the port's row in **Requests** has one. |
 | Decision | Set by people: empty (undecided), `Approved`, `Discarded` (see [Deciding what gets done](#deciding-what-gets-done-also-from-the-web-page)) |
 | Status | Set by the backporter: `Not started`, `Conflicts`, `PR open`, `Merged`, `Closed`, `Already present`, `Not applicable` |
 | Backport PR | URL of the backport PR in `Altinity/ClickHouse`; for `Already present`, the PR that already brought the change (Altinity or ClickHouse) |
@@ -231,11 +233,11 @@ Draft items can't have comments, so the explanation goes in `Note`. Notes and fo
 - `All`: a board of all tracked rows (filter `has:requested`).
 
 `init` and `add-version` set up the columns of every view. Views created through the API would otherwise show only GitHub's defaults.
-- **Shown:** Decision, Status, Version, Requested, Requested by and Note. Hidden in the tables: Backport PR, because a row with a backport PR is that PR, and Not needed from, which is set in requests; the rows it excludes are `Not applicable` with the reason in Note. `Requests` gets only Version, Source PR (for ports) and Note (its rows are the PRs themselves), and the board's cards get Version and Decision.
+- **Shown:** Decision, Status, Version, Requested, Requested by, Justification and Note. Hidden in the tables: Backport PR, because a row with a backport PR is that PR, and Not needed from, which is set in requests; the rows it excludes are `Not applicable` with the reason in Note. `Requests` gets only Version, Not needed from, Source PR (for ports), Justification and Note (its rows are the PRs themselves), and the board's cards get Version and Decision.
 - **Hidden:** the built-in Assignees, Linked pull requests and Sub-issues progress, which are always empty for draft items.
 - **Left alone:** other columns you turn on yourself.
 
-GitHub's API can't set column order. Columns follow the order in which the fields were created, so `init` creates the fields people use first: Decision, Backport PR, Note, then Requested, Requested by, Flavor and Source PR. Version and Not needed from come last, because GitHub won't create a select field without options and the first `add-version` creates them. To change the order in a view, drag the column headers in the web page and save the view.
+GitHub's API can't set column order. Columns follow the order in which the fields were created, so `init` creates the fields people use first: Decision, Backport PR, Note, Justification, then Requested, Requested by, Flavor and Source PR. Version and Not needed from come last, because GitHub won't create a select field without options and the first `add-version` creates them. To change the order in a view, drag the column headers in the web page and save the view.
 
 The project is the source of truth. People set Decision (and the request and port cells); everything else is maintained by the backporter.
 
@@ -278,7 +280,7 @@ Adds `stable-X.Y` and/or `antalya-X.Y` to the project: a `Version` option plus t
 - Each key needs a branch in `[branches]` of the config, and that branch must exist in `Altinity/ClickHouse`. Add the entry first.
 - Existing versions are refused.
 
-It then backfills: every tracked PR whose explicit requests imply a new version gets an `implied` item for it. For example, after `add-version 27.3 --flavor both`, a PR with an explicit `stable-25.8` gets `stable-27.3` and `antalya-27.3`.
+It then backfills: every tracked PR whose explicit requests imply a new version gets an `implied` item for it. For example, after `add-version 27.3 --flavor both`, a PR with an explicit `stable-25.8` gets `stable-27.3` and `antalya-27.3`, with that request's Requested by and Justification.
 
 ### `add`
 

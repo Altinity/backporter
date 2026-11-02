@@ -24,6 +24,8 @@ F_BACKPORT_PR = "Backport PR"
 F_NOTE = "Note"
 F_DECISION = "Decision"
 F_REQUESTED_BY = "Requested by"
+# Why the backport is needed, typed by the requester; copied to every row the request creates.
+F_JUSTIFICATION = "Justification"
 # Version number (e.g. "26.3") from which a backport is not needed, set in a request; empty = no limit.
 F_NOT_NEEDED_FROM = "Not needed from"
 
@@ -55,8 +57,8 @@ DECISION_COLORS = {APPROVED: "BLUE", DISCARDED: "GRAY"}
 # Column order can't be set via the API: it follows field creation order.
 # Backport PR isn't shown: once it exists, the row is that PR (its Title links to it). Not needed from is set in
 # requests only; rows it excludes are Not applicable with the reason in Note.
-_TABLE_FIELDS = [F_DECISION, F_STATUS, F_VERSION, F_REQUESTED, F_REQUESTED_BY, F_NOTE]
-_REQUESTS_FIELDS = [F_VERSION, F_NOT_NEEDED_FROM, F_SOURCE_PR, F_NOTE]
+_TABLE_FIELDS = [F_DECISION, F_STATUS, F_VERSION, F_REQUESTED, F_REQUESTED_BY, F_JUSTIFICATION, F_NOTE]
+_REQUESTS_FIELDS = [F_VERSION, F_NOT_NEEDED_FROM, F_SOURCE_PR, F_JUSTIFICATION, F_NOTE]
 _BOARD_FIELDS = [F_VERSION, F_DECISION]
 REQUESTS_VIEW = "Requests"
 # Built-in columns that are always empty for draft items (in Requests also Status).
@@ -66,7 +68,7 @@ REQUESTED_COLORS = {EXPLICIT: "GREEN", IMPLIED: "GRAY"}
 
 _OWN_FIELDS = {
     F_SOURCE_PR, F_VERSION, F_FLAVOR, F_REQUESTED, F_STATUS, F_BACKPORT_PR, F_NOTE, F_DECISION, F_REQUESTED_BY,
-    F_NOT_NEEDED_FROM,
+    F_NOT_NEEDED_FROM, F_JUSTIFICATION,
 }
 _CUSTOM_FIELD_TYPES = {"TEXT", "SINGLE_SELECT", "MULTI_SELECT", "NUMBER", "DATE", "ITERATION"}
 
@@ -138,6 +140,7 @@ class Item:
     decision: str
     requested_by: str
     not_needed_from: str
+    justification: str
     # Who added the item to the project
     creator: str
     # Every text, single select, number and date value, by field name
@@ -222,7 +225,7 @@ class Project:
         # Columns follow field creation order, so the fields people use come first. Version needs at least
         # one option, so the first add-version creates it. Source PR goes last: it marks the project as formatted.
         self._ensure_single_select(F_DECISION, DECISION_COLORS, exact=False)
-        for name in (F_BACKPORT_PR, F_NOTE):
+        for name in (F_BACKPORT_PR, F_NOTE, F_JUSTIFICATION):
             if name not in self.fields:
                 self._create_field(name, "TEXT")
         self._ensure_single_select(F_REQUESTED, REQUESTED_COLORS, exact=False)
@@ -445,6 +448,7 @@ class Project:
                     decision=values.get(F_DECISION, ""),
                     requested_by=values.get(F_REQUESTED_BY, ""),
                     not_needed_from=values.get(F_NOT_NEEDED_FROM, ""),
+                    justification=values.get(F_JUSTIFICATION, ""),
                     creator=(node.get("creator") or {}).get("login", ""),
                     values=values,
                 ))
