@@ -750,7 +750,16 @@ def scan(gh: Github, config: Config, only_version: str | None) -> None:
     for n, item in enumerate(to_refresh, 1):
         version = versions[item.version]
         print(f"  [{n}/{len(to_refresh)}] {item.version} {item.source_pr}", flush=True)
-        pr = find_backport_pr(repo, item, version)
+        try:
+            pr = find_backport_pr(repo, item, version)
+        except ValueError as e:
+            field = F_BACKPORT_PR if item.backport_pr else F_SOURCE_PR
+            print(f"    {e}; fix the row's {field}, skipped", file=sys.stderr)
+            note = f"No valid {field}: set it so scan can track this row"
+            if note not in item.note:
+                item.note = f"{note}; {item.note}" if item.note else note
+                project.set_value(item.id, F_NOTE, item.note)
+            continue
         if pr is None:
             continue
         status = pr_status(pr)
