@@ -36,13 +36,20 @@ REVIEW_OUTCOMES = (VALID, ALREADY_PRESENT, NOT_APPLICABLE, INVALID)
 
 TIMEOUT_SECONDS = 2 * 3600
 
+SUBMODULE_RULE = (
+    "- Submodules (e.g. under contrib/) are commit pointers, and their checkouts in this clone may be stale: "
+    "never `git add` a submodule path, it would record whatever commit is checked out. Set a submodule's commit "
+    "with `git update-index --cacheinfo 160000,<full sha>,<path>`; `git ls-tree <rev> <path>` shows a revision's."
+)
+
 _SECRET_VARS = ("GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "ANTHROPIC_API_KEY")
 
 READ_GIT_SUBCOMMANDS = (
     "status", "diff", "log", "show", "grep", "blame", "ls-files", "merge-base", "rev-parse", "cat-file",
 )
-# Read-only git subcommands plus staging; `git checkout` only as `--ours`/`--theirs`.
-GIT_SUBCOMMANDS = (*READ_GIT_SUBCOMMANDS, "add", "rm", "checkout")
+# Read-only git subcommands plus staging; `git checkout` only as `--ours`/`--theirs`, `git update-index` only
+# as `--cacheinfo 160000,<sha>,<path>` (setting a submodule's commit).
+GIT_SUBCOMMANDS = (*READ_GIT_SUBCOMMANDS, "add", "rm", "checkout", "update-index")
 OTHER_COMMANDS = ("ls", "cat", "head", "tail", "grep", "rg", "wc")
 
 _CLI_DENY = [
@@ -115,6 +122,7 @@ Rules:
 - Do not commit, switch branches, reset, fetch or push. The backporter does that.
 - Use one plain command per Bash call, with no pipes, redirections or `&&`.
 - You have no network or GitHub access, so don't try to use them.
+{SUBMODULE_RULE}
 
 End your answer with these lines, exactly:
 OUTCOME: <RESOLVED|ALREADY_PRESENT|NOT_APPLICABLE|UNRESOLVED>
@@ -156,6 +164,7 @@ Then decide on exactly one outcome:
 
 Rules:
 - Work only inside {repo_dir}. Don't edit or stage anything: you only review.
+- Submodule commits are committed from the index, not from the clone's submodule checkouts, which may be stale: check them with `git diff --cached {branch} -- <path>`.
 - Use one plain command per Bash call, with no pipes, redirections or `&&`.
 - You have no network or GitHub access, so don't try to use them.
 
@@ -193,6 +202,7 @@ Rules:
 - Do not commit, switch branches, reset, fetch or push. The backporter does that.
 - Use one plain command per Bash call, with no pipes, redirections or `&&`.
 - You have no network or GitHub access, so don't try to use them.
+{SUBMODULE_RULE}
 
 End your answer with these lines, exactly:
 OUTCOME: <RESOLVED|UNRESOLVED>
@@ -227,6 +237,7 @@ Rules:
 - You can't build or run tests; read the code and the reports.
 - Use one plain command per Bash call, with no pipes, redirections or `&&`.
 - You have no network or GitHub access, so don't try to use them.
+{SUBMODULE_RULE}
 
 End your answer with these lines, exactly:
 OUTCOME: <FIXED|UNRELATED|UNRESOLVED>
@@ -340,7 +351,7 @@ def _read_tools() -> list[str]:
 def _resolve_tools() -> list[str]:
     return [
         *_read_tools(), "Edit(./**)", "Write(./**)", "Bash(git add *)", "Bash(git rm *)",
-        "Bash(git checkout --ours *)", "Bash(git checkout --theirs *)",
+        "Bash(git checkout --ours *)", "Bash(git checkout --theirs *)", "Bash(git update-index --cacheinfo 160000,*)",
     ]
 
 

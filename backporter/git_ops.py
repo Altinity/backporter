@@ -442,7 +442,20 @@ def commit_conflicts(repo_dir: str, conflicts: list[tuple[str, str]]) -> str:
     message = open(msg_path).read() if os.path.exists(msg_path) else "Cherry-pick\n"
     listing = "\n".join(f"- {path} ({kind})" for path, kind in conflicts)
     message = f"{message.rstrip()}\n\nConflicts committed as-is; the next commit resolves them:\n{listing}\n"
-    run(["git", "add", "-A", "--", *[path for path, _ in conflicts]], cwd=repo_dir)
+    # A conflicted submodule keeps our side's commit (theirs if ours deleted it): `git add` would record
+    # whatever commit the clone's submodule has checked out.
+    gitlinks: dict[str, dict[str, str]] = {}
+    out = run(["git", "ls-files", "-u", "-z", "--", *[path for path, _ in conflicts]], cwd=repo_dir).stdout
+    for entry in filter(None, out.split("\0")):
+        info, path = entry.split("\t", 1)
+        mode, sha, stage = info.split()
+        if mode == "160000" and stage in ("2", "3"):
+            gitlinks.setdefault(path, {})[stage] = sha
+    for path, stages in gitlinks.items():
+        run(["git", "update-index", "--cacheinfo", f"160000,{stages.get('2') or stages['3']},{path}"], cwd=repo_dir)
+    files = [path for path, _ in conflicts if path not in gitlinks]
+    if files:
+        run(["git", "add", "-A", "--", *files], cwd=repo_dir)
     sha = _commit(repo_dir, message)
     if is_cherry_pick_in_progress(repo_dir) or is_merge_in_progress(repo_dir):
         raise RuntimeError("cherry-pick or merge still in progress after committing the conflicts")
@@ -450,8 +463,14 @@ def commit_conflicts(repo_dir: str, conflicts: list[tuple[str, str]]) -> str:
 
 
 def commit_resolution(repo_dir: str, message: str) -> str:
-    """Commit all changes to tracked files as the resolution of the previous (conflict) commit."""
-    run(["git", "add", "-u"], cwd=repo_dir)
+    """
+    Commit the index plus all changes to tracked files as the resolution of the previous (conflict) commit.
+    Submodule commits come only from the index: the clone's submodule checkouts may be stale.
+    """
+    out = run(["git", "diff", "--name-only", "-z", "--ignore-submodules=all"], cwd=repo_dir).stdout
+    paths = [path for path in out.split("\0") if path]
+    if paths:
+        run(["git", "--literal-pathspecs", "add", "--", *paths], cwd=repo_dir)
     return _commit(repo_dir, message, "--allow-empty")
 
 

@@ -6,6 +6,7 @@ ai.OTHER_COMMANDS; ai.READ_GIT_SUBCOMMANDS for a read-only agent). File tools ar
 """
 
 import os
+import re
 import shlex
 import subprocess
 import time
@@ -26,11 +27,15 @@ SYSTEM = (
 
 def _bash_tool(git_subcommands: tuple[str, ...]) -> dict:
     checkout = " (checkout only with --ours/--theirs)" if "checkout" in git_subcommands else ""
+    update_index = (
+        " (update-index only as `--cacheinfo 160000,<sha>,<path>`)" if "update-index" in git_subcommands else ""
+    )
     return {
         "name": "bash",
         "description": (
             "Run one command in the repo (no shell: no pipes, redirections, `&&`, `;` or `$()`). "
-            f"Allowed: git {', git '.join(git_subcommands)}{checkout}, and {', '.join(ai.OTHER_COMMANDS)}."
+            f"Allowed: git {', git '.join(git_subcommands)}{checkout}{update_index}, "
+            f"and {', '.join(ai.OTHER_COMMANDS)}."
         ),
         "eager_input_streaming": True,
         "input_schema": {
@@ -119,6 +124,10 @@ def _bash(repo_dir: str, command: str, env: dict[str, str], git_subcommands: tup
             raise ToolError(f"git subcommand not allowed: {' '.join(argv[:2])}")
         if sub == "checkout" and argv[2:3] not in (["--ours"], ["--theirs"]):
             raise ToolError("only `git checkout --ours|--theirs <paths>` is allowed")
+        if sub == "update-index":
+            if len(argv) != 4 or argv[2] != "--cacheinfo" or not re.fullmatch(r"160000,[0-9a-f]{40},.+", argv[3]):
+                raise ToolError("only `git update-index --cacheinfo 160000,<full sha>,<path>` is allowed")
+            _path(repo_dir, argv[3].split(",", 2)[2])
         # --output writes a file anywhere; -O/--open-files-in-pager runs a command.
         if any(a.startswith(("--output", "-O", "--open-files-in-pager", "--ext-diff", "--textconv")) for a in argv[2:]):
             raise ToolError("option not allowed")
